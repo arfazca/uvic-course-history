@@ -339,6 +339,89 @@ def check_cmd(a):
                 print(f"    {term_label(code):<16} {tag:<8} {int(round(p * 100)):>3}%  ({SEASON_LABEL[season(code)]})")
 
 
+def list_cmd(a):
+    cache = load_cache(a.cache)
+    agg = aggregate(cache)
+    subj = a.subject.upper()
+    rows = []
+    for key in agg:
+        if key[0] != subj:
+            continue
+        v = course_view(subj, key[1], agg, active_terms(cache), a.window)
+        rows.append(v)
+
+    def norm_num(k):
+        return int(re.sub(r"\D", "", k[1]) or 0)
+    if a.sort == "code":
+        rows.sort(key=lambda v: (norm_num(v["key"]), v["key"][1]))
+    else:
+        rows.sort(key=lambda v: v["last"], reverse=True)
+    if not rows:
+        print(f"no {subj} data cached — run sync with that subject")
+        return
+    print(f"{len(rows)} {subj} courses in cache ({','.join(DEFAULT_SUBJECTS)} default)")
+    print(f"{'course':<10}{'title':<42}{'last offered':<16}  F/SP/SU")
+    for v in rows:
+        p = v["probs"]
+        freq = f"{p['FALL']:.0%}/{p['SPR']:.0%}/{p['SUM']:.0%}"
+        head = v["key"][0] + " " + v["key"][1]
+        flag = ""
+        if v["future_listed"]:
+            flag = "  (already listed)"
+        elif len(v["gap_terms"]) >= 4:
+            flag = f"  <-- absent {len(v['gap_terms'])}+ terms"
+        print(f"{head:<10}{(v['title'] or '')[:40]:<42}{term_label(v['last']):<16}  {freq}{flag}")
+
+
+def stale_cmd(a):
+    cache = load_cache(a.cache)
+    agg = aggregate(cache)
+    active = active_terms(cache)
+    subs = [s.strip().upper() for s in a.subjects.split(",") if s.strip()]
+    rows = []
+    for key in agg:
+        if key[0] not in subs:
+            continue
+        v = course_view(*key, agg, active, a.window)
+        if not v or not v["regular"]:
+            continue
+        if len(v["gap_terms"]) >= a.gap:
+            rows.append(v)
+    if not rows:
+        print(f"nothing looks dormant in {','.join(subs)} (gap >= {a.gap} terms)")
+        return
+    rows.sort(key=lambda v: len(v["gap_terms"]), reverse=True)
+    print(f"{len(rows)} courses absent for >= {a.gap} straight published terms:\n")
+    print(f"{'course':<10}{'title':<42}{'last offered':<16}gap")
+    for v in rows:
+        head = v["key"][0] + " " + v["key"][1]
+        print(f"{head:<10}{(v['title'] or '')[:40]:<42}{term_label(v['last']):<16}{len(v['gap_terms'])} terms")
+
+
+def desc_cmd(a):
+    cache = load_cache(a.cache)
+    active = active_terms(cache)
+    if not active:
+        print("cache empty — run sync first")
+        return
+    subj = a.subject.upper()
+    num = a.course.zfill(3)
+    banner = Banner()
+    for term in reversed(active):
+        secs = cache["terms"][term]["subjects"].get(subj) or []
+        base = [s for s in secs if str(s.get("courseNumber", "")).zfill(3) == num]
+        if base:
+            s = base[0]
+            banner.new_term(term)
+            d = banner.course_description(term, s["courseReferenceNumber"])
+            print(f"{subj} {num} — {s.get('courseTitle')}   ({term_label(term)}, CRN {s.get('courseReferenceNumber')})")
+            print(d["text"])
+            if d["url"]:
+                print(d["url"])
+            return
+    print(f"{subj} {num}: no cached sections found (run sync?):")
+
+
 def terms_cmd(a):
     cache = load_cache(a.cache)
     for t in sorted(cache["terms"]):
@@ -368,10 +451,25 @@ def main(argv):
     c.add_argument("course", nargs="+")
     c.add_argument("--window", type=int, default=8)
 
+    l = sub.add_parser("list")
+    l.add_argument("subject")
+    l.add_argument("--sort", choices=["code", "last"], default="code")
+    l.add_argument("--window", type=int, default=8)
+
+    st = sub.add_parser("stale")
+    st.add_argument("--subjects", default=",".join(DEFAULT_SUBJECTS))
+    st.add_argument("--gap", type=int, default=4)
+    st.add_argument("--window", type=int, default=8)
+
+    d = sub.add_parser("desc")
+    d.add_argument("subject")
+    d.add_argument("course")
+
     sub.add_parser("terms")
 
     a = p.parse_args(argv)
-    dispatch = {"sync": sync_cmd, "check": check_cmd, "terms": terms_cmd}
+    dispatch = {"sync": sync_cmd, "check": check_cmd, "list": list_cmd,
+                "stale": stale_cmd, "desc": desc_cmd, "terms": terms_cmd}
     dispatch[a.cmd](a)
 
 
