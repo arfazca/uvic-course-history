@@ -431,6 +431,147 @@ def terms_cmd(a):
         print(f"{t}  {term_label(t):<16} {counts}{gap}")
 
 
+# --- HTML report -------------------------------------------------------------
+
+REPORT_CSS = """
+:root{--ink:#20242b;--pale:#7a7f88;--bg:#faf9f7;--card:#fff;--line:#e5e1d9;--green:#2e6f4e;--blue:#375a8d;--amber:#b2642a}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 -apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;color:var(--ink);background:var(--bg)}
+header{padding:28px 5vw 12px;border-bottom:1px solid var(--line)}
+header h1{margin:0 0 4px;font-size:22px}
+header p{margin:0;color:var(--pale);font-size:13px;max-width:120ch}
+.controls{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;gap:10px;flex-wrap:wrap;padding:12px 5vw;border-bottom:1px solid var(--line)}
+.controls input,.controls select{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;font-size:14px}
+.controls input{min-width:260px;flex:1;max-width:420px}
+label.tog{display:flex;gap:6px;align-items:center;color:var(--pale);font-size:13px;padding-top:7px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;padding:18px 5vw 70px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+.card.stale{border-color:#d8b28a}
+.head{display:flex;align-items:baseline;gap:10px}
+.code{font-weight:700;font-size:15px}
+.title{color:var(--pale);font-size:13px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.warn{font-size:11px;color:var(--amber);border:1px solid #e2b98c;border-radius:6px;padding:1px 7px;white-space:nowrap}
+.row1{display:flex;gap:6px;align-items:center;margin:10px 0 8px;flex-wrap:wrap}
+.chip{font-size:11px;border-radius:6px;padding:2px 8px}
+.chip.Fall{background:#e7f0eb;color:#2e6f4e}
+.chip.Spring{background:#eaeef5;color:#375a8d}
+.chip.Summer{background:#f6efe2;color:#8a6420}
+.last{margin-left:auto;color:var(--pale);font-size:12px;white-space:nowrap}
+.strip{display:flex;gap:2px;flex-wrap:wrap}
+.strip .c{width:8px;height:14px;border-radius:2px;display:inline-block}
+.fcrow{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;font-size:11px}
+.fc{border-radius:6px;padding:2px 8px;border:1px solid var(--line);color:var(--pale)}
+.fc.likely{border-color:var(--green);color:var(--green);background:#f4f8f5}
+.fc.maybe{border-color:#c9b26a;color:#7c6a24}
+.fc.hit{border-color:var(--blue);color:var(--blue);background:#f0f4fa}
+.fc.miss{color:#9aa0a8}
+.empty{color:var(--pale);padding:40px 0}
+"""
+
+REPORT_JS = """
+const D=DATA, EL=i=>document.getElementById(i);
+const esc=s=>String(s).replace(/[&<>']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;'}[m]));
+function render(){
+  const q=EL('q').value.toLowerCase(), sub=EL('subject').value, lvl=EL('level').value,
+        hide=EL('hidestale').checked;
+  let htmlout='', n=0;
+  for (const k of Object.keys(D.courses)){
+    const c=D.courses[k];
+    if(sub && c.subject!==sub) continue;
+    if(lvl && (lvl==='5+'? Number(c.num)<500 : String(c.num).charAt(0)!==lvl)) continue;
+    if(hide && c.gapN>=4 && c.regular) continue;
+    if(q && !((c.subject+c.num+' '+(c.title||'')).toLowerCase().includes(q))) continue;
+    n++;
+    const lights=D.active.map(t=>`<span class="c" title="${D.termLabel[t]}${c.terms.includes(t)?' — offered':''}" style="background:${c.terms.includes(t)?'#2e6f4e':'#e6e2da'}"></span>`).join('');
+    const probs=['FALL','SPR','SUM'].map(s=>`<span class="chip ${D.chip[s]}">${D.chip[s]} ${Math.round(c.probs[s]*100)}%</span>`).join('');
+    let fc='';
+    for (const u of D.upcoming){
+      if (D.active.includes(u)){
+        const hit=c.terms.includes(u);
+        fc+=`<span class="fc ${hit?'hit':'miss'}">${D.termLabel[u]}: ${hit?'listed':'not listed'}</span>`;
+      } else {
+        const p=c.probs[D.seasonOf[u]], cls=p>=0.8?'likely':(p>=0.45?'maybe':'');
+        fc+=`<span class="fc ${cls}">${D.termLabel[u]}: ${Math.round(p*100)}%</span>`;
+      }
+    }
+    const warn=(c.gapN>=4 && c.regular)?`<span class="warn">absent ${c.gapN} terms</span>`:'';
+    htmlout+=`<div class="card ${warn?'stale':''}">
+      <div class="head"><span class="code">${esc(c.subject)} ${esc(c.num)}</span>
+      <span class="title">${esc(c.title||'')}</span>${warn}</div>
+      <div class="row1">${probs}<span class="last">last: ${D.termLabel[c.last]}</span></div>
+      <div class="strip">${lights}</div>
+      <div class="fcrow">${fc}</div></div>`;
+  }
+  EL('count').textContent=n+' courses';
+  EL('grid').innerHTML=htmlout||'<p class="empty">no matches</p>';
+}
+EL('q').addEventListener('input',render);
+['subject','level','hidestale'].forEach(i=>EL(i).addEventListener('change',render));
+render();
+"""
+
+
+def report_cmd(a):
+    cache = load_cache(a.cache)
+    agg = aggregate(cache)
+    active = active_terms(cache)
+    if not active:
+        print("cache empty — run sync first")
+        return
+    now = date.today().year
+    upcoming = next_term_codes(max(active), 3)
+
+    courses = {}
+    for key in agg:
+        subj, num = key
+        v = course_view(subj, num, agg, active, a.window)
+        courses[f"{subj} {num}"] = {
+            "subject": subj, "num": num, "title": v["title"], "terms": v["terms"],
+            "last": v["last"], "probs": v["probs"], "gapN": len(v["gap_terms"]),
+            "regular": v["regular"],
+        }
+    labels = [t for t in active + upcoming]
+    data = {
+        "active": active,
+        "upcoming": upcoming,
+        "seasonOf": {t: season(t) for t in active + upcoming},
+        "termLabel": {t: term_label(t) for t in labels},
+        "chip": SEASON_CHIP,
+        "courses": courses,
+    }
+    subs = sorted({s for s, _ in agg})
+    html = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UVic engineering &amp; CS — offering history &amp; forecast</title>
+<style>{REPORT_CSS}</style></head><body>
+<header>
+<h1>UVic offering history &amp; upcoming-term forecast</h1>
+<p>{htmlesc.escape(' · '.join(subs))} — {len(courses)} courses · published terms {active[0]}–{active[-1]} ·
+synced {htmlesc.escape(cache.get('fetched_at') or '')} · source: banner.uvic.ca (public timetable search)</p>
+<p>Colored blocks = course offered that term. Season % = share of the last {a.window} years the course ran in
+Fall / Spring / Summer. Forecast chips are statistical inferences from history — <em>not</em> official UVic
+schedules; courses marked “listed” already appear in the next published timetable.</p>
+</header>
+<div class="controls">
+  <input id="q" type="search" placeholder="search subject, number, or title …">
+  <select id="subject"><option value="">all subjects</option>
+    {''.join(f'<option>{s}</option>' for s in subs)}</select>
+  <select id="level"><option value="">all levels</option>
+    {''.join(f'<option>{i}</option>' for i in ('1', '2', '3', '4'))}
+    <option value="5+">grad (500+)</option></select>
+  <label class="tog"><input type="checkbox" id="hidestale"> hide dormant</label>
+  <span style="color:var(--pale);font-size:12px;padding-top:7px" id="count"></span>
+</div>
+<div id="grid"></div>
+<script>const DATA = {json.dumps(data, ensure_ascii=False)};</script>
+<script>{REPORT_JS}</script>
+</body></html>"""
+    os.makedirs(os.path.dirname(a.out), exist_ok=True)
+    with open(a.out, "w", encoding="utf-8") as f:
+        f.write(html)
+    print(f"report -> {a.out}  ({len(courses)} courses, {len(active)} terms, forecast to {max(upcoming)})")
+
+
 # --- main -------------------------------------------------------------------
 
 def main(argv):
@@ -467,9 +608,13 @@ def main(argv):
 
     sub.add_parser("terms")
 
+    r = sub.add_parser("report")
+    r.add_argument("--out", default=DEFAULT_REPORT)
+    r.add_argument("--window", type=int, default=8)
+
     a = p.parse_args(argv)
     dispatch = {"sync": sync_cmd, "check": check_cmd, "list": list_cmd,
-                "stale": stale_cmd, "desc": desc_cmd, "terms": terms_cmd}
+                "stale": stale_cmd, "desc": desc_cmd, "terms": terms_cmd, "report": report_cmd}
     dispatch[a.cmd](a)
 
 
