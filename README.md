@@ -22,7 +22,7 @@ bash run.sh CSC 370
 bash run.sh CSC 421 432 436 438   # batch works too
 ```
 
-everything else, straight through the script:
+more useful commands:
 
 ```bash
 python3 uvic_courses.py sync           # pull new terms (fast, incremental)
@@ -31,5 +31,3 @@ python3 uvic_courses.py stale          # courses that quietly stopped appearing
 python3 uvic_courses.py desc CSC 105   # calendar description + prereq link
 python3 uvic_courses.py report         # rebuild report.html
 ```
-
-the percentages are inferred from history, they are not uvic's official schedule.
